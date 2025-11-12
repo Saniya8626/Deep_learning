@@ -1,0 +1,104 @@
+import tensorflow as tf
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, Dense, Embedding, Lambda
+import numpy as np
+import tensorflow.keras.backend as K
+
+# --- a. Data Preparation ---
+corpus = """
+The quick brown fox jumps over the lazy dog.
+The dog barks, and the fox runs away.
+A quick brown rabbit also jumps.
+"""
+
+# Tokenize the corpus
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts([corpus])
+word_index = tokenizer.word_index
+vocab_size = len(word_index) + 1  # +1 for zero padding index
+print(f"Vocabulary: {word_index}")
+print(f"Vocabulary size (including padding): {vocab_size}")
+
+# Convert corpus to sequence of integers
+sequences = tokenizer.texts_to_sequences([corpus])[0]
+print(f"Sequences: {sequences}")
+
+# --- b. Create CBOW training data (context -> target) ---
+context_window = 2  # number of words to each side
+data_cbow = []
+target_cbow = []
+
+for i, word in enumerate(sequences):
+    context_start = max(0, i - context_window)
+    context_end = min(len(sequences), i + context_window + 1)
+    context_indices = sequences[context_start:i] + sequences[i+1:context_end]
+    if context_indices:
+        data_cbow.append(context_indices)
+        target_cbow.append(word)
+
+# Determine fixed context length and pad contexts with 0 (padding index)
+max_context_len = 2 * context_window  # maximum possible context size
+data_cbow_padded = pad_sequences(data_cbow, maxlen=max_context_len, padding='pre', value=0)
+data_cbow_padded = np.array(data_cbow_padded)
+target_cbow = np.array(target_cbow)
+
+print(f"\nCBOW data shape (padded contexts): {data_cbow_padded.shape}")
+print(f"CBOW target shape: {target_cbow.shape}")
+print(f"Example (padded context -> target): {data_cbow_padded[0]} -> {target_cbow[0]}")
+
+# --- c. Build the CBOW model ---
+embedding_dim = 10
+
+cbow_input = Input(shape=(max_context_len,), name='cbow_input')  # fixed-length context
+embedding = Embedding(input_dim=vocab_size, output_dim=embedding_dim, name='word_embedding',
+                      mask_zero=False)  # mask_zero=False for simplicity
+embedded_contexts = embedding(cbow_input)  # shape: (batch, max_context_len, embedding_dim)
+
+# Average embeddings across context words (simple mean; padded zeros affect mean magnitude)
+def average_embeddings(x):
+    return K.mean(x, axis=1)
+
+averaged_context = Lambda(average_embeddings, output_shape=(embedding_dim,), name='average_context')(embedded_contexts)
+
+cbow_output = Dense(vocab_size, activation='softmax', name='output_layer')(averaged_context)
+
+cbow_model = Model(inputs=cbow_input, outputs=cbow_output)
+cbow_model.compile(optimizer='adam',
+                   loss='sparse_categorical_crossentropy',
+                   metrics=['accuracy'])
+
+cbow_model.summary()
+
+# --- d. Train the CBOW model ---
+print("\nTraining the CBOW model...")
+history_cbow = cbow_model.fit(data_cbow_padded, target_cbow, epochs=100, batch_size=16, verbose=0)
+print("Training finished.")
+
+# --- e. Extract embeddings ---
+word_embeddings = cbow_model.get_layer('word_embedding').get_weights()[0]
+print(f"\nShape of word embeddings: {word_embeddings.shape}")  # (vocab_size, embedding_dim)
+
+# Print first 5 dims for each word
+print("\nWord Embeddings (first 5 dims):")
+for word, idx in word_index.items():
+    print(f"'{word}': {word_embeddings[idx][:5]}")
+
+# --- f. Example similarity: cosine similarity to 'fox' (if present) ---
+def cosine_sim(a, b):
+    a = a / (np.linalg.norm(a) + 1e-9)
+    b = b / (np.linalg.norm(b) + 1e-9)
+    return float(np.dot(a, b))
+
+if 'fox' in word_index:
+    fox_vec = word_embeddings[word_index['fox']]
+    sims = []
+    for w, idx in word_index.items():
+        sims.append((w, cosine_sim(fox_vec, word_embeddings[idx])))
+    sims_sorted = sorted(sims, key=lambda x: x[1], reverse=True)
+    print("\nTop similarities to 'fox':")
+    for w, s in sims_sorted[:5]:
+        print(f"{w}: {s:.4f}")
+else:
+    print("\nWord 'fox' not in vocabulary.")
