@@ -1,0 +1,128 @@
+import tensorflow as tf
+from tensorflow.keras.applications import VGG16
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Dense, Flatten, Dropout
+from tensorflow.keras.datasets import cifar10
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.optimizers import Adam
+import matplotlib.pyplot as plt
+
+# --- a. Load in a pre-trained CNN model trained on a large dataset ---
+# Load VGG16 pre-trained on ImageNet, without the top classification layers
+base_model = VGG16(weights='imagenet', include_top=False, input_shape=(32, 32, 3))
+
+# Note: VGG16 was originally trained on 224x224 images.
+# For demonstration, we use 32x32 (CIFAR-10). For better results, resize to 224x224.
+
+# --- b. Freeze parameters (weights) in the model’s lower convolutional layers ---
+for layer in base_model.layers:
+    layer.trainable = False
+
+# --- c. Add a custom classifier with several layers of trainable parameters ---
+x = base_model.output
+x = Flatten()(x)  # Flatten the output of the convolutional base
+x = Dense(512, activation='relu')(x)  # Add a dense layer
+x = Dropout(0.5)(x)  # Add dropout for regularization
+
+# Add the final output layer for classification (CIFAR-10 has 10 classes)
+num_classes = 10
+predictions = Dense(num_classes, activation='softmax')(x)
+
+# Create the new model
+model = Model(inputs=base_model.input, outputs=predictions)
+model.summary()
+
+# --- d. Train classifier layers on training data available for the task ---
+# Load and preprocess CIFAR-10 data
+(x_train, y_train), (x_test, y_test) = cifar10.load_data()
+
+x_train = x_train.astype('float32') / 255.0
+x_test = x_test.astype('float32') / 255.0
+
+y_train = to_categorical(y_train, num_classes)
+y_test = to_categorical(y_test, num_classes)
+
+# Compile the model
+model.compile(
+    optimizer=Adam(learning_rate=0.001),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+# Train the model (only the new layers are trained)
+print("\nTraining the custom classifier layers...")
+batch_size = 64
+epochs = 5  # Reduced for quick demonstration
+history = model.fit(
+    x_train, y_train,
+    batch_size=batch_size,
+    epochs=epochs,
+    validation_data=(x_test, y_test)
+)
+
+# --- e. Fine-tune hyperparameters and unfreeze more layers as needed ---
+print("\nStarting fine-tuning...")
+
+# Unfreeze some top layers of the base model
+# For VGG16, layers from index 15 onward correspond roughly to 'block5'
+for layer in base_model.layers[15:]:
+    layer.trainable = True
+
+# Re-compile the model with a very low learning rate for fine-tuning
+model.compile(
+    optimizer=Adam(learning_rate=1e-5),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+model.summary()
+
+# Train again for fine-tuning
+print("Fine-tuning the model with unfrozen layers...")
+fine_tune_epochs = 5
+total_epochs = epochs + fine_tune_epochs
+
+history_fine = model.fit(
+    x_train, y_train,
+    batch_size=batch_size,
+    epochs=total_epochs,
+    initial_epoch=history.epoch[-1] + 1,
+    validation_data=(x_test, y_test)
+)
+
+# --- f. Combine histories for plotting ---
+history.history['accuracy'].extend(history_fine.history['accuracy'])
+history.history['val_accuracy'].extend(history_fine.history['val_accuracy'])
+history.history['loss'].extend(history_fine.history['loss'])
+history.history['val_loss'].extend(history_fine.history['val_loss'])
+
+# --- g. Plot training history after fine-tuning ---
+plt.figure(figsize=(14, 5))
+
+# Accuracy plot
+plt.subplot(1, 2, 1)
+plt.plot(range(1, total_epochs + 1), history.history['accuracy'], label='Training Accuracy')
+plt.plot(range(1, total_epochs + 1), history.history['val_accuracy'], label='Validation Accuracy')
+plt.title('Training and Validation Accuracy (After Fine-tuning)')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.legend()
+plt.grid(True)
+
+# Loss plot
+plt.subplot(1, 2, 2)
+plt.plot(range(1, total_epochs + 1), history.history['loss'], label='Training Loss')
+plt.plot(range(1, total_epochs + 1), history.history['val_loss'], label='Validation Loss')
+plt.title('Training and Validation Loss (After Fine-tuning)')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+plt.grid(True)
+
+plt.tight_layout()
+plt.show()
+
+# --- h. Evaluate the final model ---
+print("\nEvaluating the final fine-tuned model...")
+loss, accuracy = model.evaluate(x_test, y_test, verbose=0)
+print(f"Final Test Loss: {loss:.4f}")
+print(f"Final Test Accuracy: {accuracy:.4f}")
