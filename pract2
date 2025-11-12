@@ -1,0 +1,73 @@
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Flatten
+from tensorflow.keras.datasets import mnist
+from tensorflow.keras.optimizers import SGD
+import matplotlib.pyplot as plt
+
+# 1. Import necessary packages (Done above)
+
+# 2. Load the training and testing data
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
+
+# Preprocessing: Normalize pixel values to be between 0 and 1
+x_train = x_train.astype('float32') / 255.0
+x_test = x_test.astype('float32') / 255.0
+
+print(f"Training data shape: {x_train.shape}")
+print(f"Testing data shape: {x_test.shape}")
+
+# 3. Define the network architecture using Keras
+model = Sequential([
+    # Flatten the 28x28 images to a 784-dimensional vector
+    Flatten(input_shape=(28, 28)),
+    # A hidden layer with 128 neurons and ReLU activation
+    Dense(128, activation='relu'),
+    # The output layer with 10 neurons (for 10 classes) and softmax activation
+    Dense(10, activation='softmax')
+])
+
+model.summary()
+
+
+# 4. Train the model using SGD
+# Compile the model
+model.compile(optimizer=SGD(learning_rate=0.01),
+              loss='sparse_categorical_crossentropy',
+              metrics=['accuracy'])
+
+# Train the model for 5 epochs
+print("\nTraining the model...")
+history = model.fit(x_train, y_train, epochs=5, validation_data=(x_test, y_test))
+
+# 5. Evaluate the network
+print("\nEvaluating the model...")
+test_loss, test_acc = model.evaluate(x_test, y_test, verbose=2)
+print(f'\nTest loss: {test_loss:.4f}')
+print(f'Test accuracy: {test_acc:.4f}')
+
+# 6. Plot the training loss and accuracy
+plt.figure(figsize=(12, 4))
+
+# Plotting Accuracy
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'], label='Training Accuracy')
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+plt.title('Training and Validation Accuracy')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.legend()
+plt.grid(True)
+
+# Plotting Loss
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'], label='Training Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.title('Training and Validation Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+plt.grid(True)
+
+plt.tight_layout()
+plt.show()
